@@ -1,0 +1,44 @@
+---
+- name: Add new backend to HAProxy configuration
+  hosts: all
+  become: true
+  vars:
+    backend_name: "Name of backend"
+    backend_domain: "backend domain"
+    backend_server_ip: "IP address backend"
+    backend_server_port: "Port backend"
+    haproxy_cfg_path: "/etc/haproxy/haproxy.cfg"
+
+  tasks:
+    - name: Checking for HAProxy configuration # Проверка файла конфигурации HAProxy
+      stat:
+        path: "{{ haproxy_cfg_path }}"
+      register: haproxy_config
+
+    - name: Fail if config file doesn't exist # Ошибка если файла конфигурации не было найдено
+      fail:
+        msg: "HAProxy configuration file not found at {{ haproxy_cfg_path }}"
+      when: not haproxy_config.stat.exists
+
+    - name: Add frontend ACL                  # Добавление блока frontend
+      blockinfile:
+        path: "{{ haproxy_cfg_path }}"
+        insertafter: "^frontend https_front"
+        marker: "    # {mark} ANSIBLE MANAGED BLOCK FOR {{ backend_name }}"
+        block: |5
+                 acl {{ backend_name }} hdr(host) -i {{ backend_domain }}
+                 use_backend {{ backend_name }} if {{ backend_name }}
+
+    - name: Add backend configuration         # Добавление блока backend
+      blockinfile:
+        path: "{{ haproxy_cfg_path }}"
+        insertbefore: EOF
+        marker: "# {mark} ANSIBLE MANAGED BLOCK FOR {{ backend_name }}"
+        block: |
+            backend {{ backend_name }}
+                mode http
+                option httpchk
+                http-check send meth GET uri / hdr Host {{ backend_domain }}
+                default-server inter 5s fall 3 rise 2
+                server ptaf-agent1 localhost:8080 check
+                server {{ backend_name }} {{ backend_server_ip }}:{{ backend_server_port }} ssl check backup verify none
